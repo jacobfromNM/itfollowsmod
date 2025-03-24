@@ -1,0 +1,28 @@
+{
+    "whispers_001": {
+      "sounds": [
+        {
+          "name": "itfollowsmod:whispers_001",
+          "stream": false
+        }
+      ]
+    },
+
+    "electric_roar": {
+      "sounds": [
+        {
+          "name": "itfollowsmod:electric_roar",
+          "stream": false
+        }
+      ]
+    }, 
+
+    "violins": {
+      "sounds": [
+        {
+          "name": "itfollowsmod:violins",
+          "stream": false
+        }
+      ]
+    }
+  }

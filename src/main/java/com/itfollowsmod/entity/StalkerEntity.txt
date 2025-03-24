@@ -1,0 +1,438 @@
+    // Irrelevant import code removed...
+
+/**
+ * StalkerEntity Class: A creepy entity that follows the player and respawns nearby, based on the 
+ * creature from the movie "It Follows" (2014). Spooky!
+ */
+public class StalkerEntity extends PathfinderMob {
+    // Other Constants
+    private static final int MAX_DISTRACTION_TIME = 20; // 1 second = 20 ticks
+    private static final double COLLISION_ATTACK_RADIUS = 2.0; // Radius to attack entities that get in the way
+    private static final int PLAYER_FOCUS_PRIORITY = 1; // Highest priority
+    private static final int COLLISION_ENTITY_PRIORITY = 8; // Lower priority than player targeting
+    private static final long BLOCK_BREAK_COOLDOWN = 20; // 1 second (about 20 ticks)
+    private static final long SOUND_COOLDOWN = 100; // Prevents frequent sound playback
+    private static final double MAX_DISTANCE_FOR_RESPAWN = 110.0; // 5 chunks
+    private final Random random = new Random();
+    private long lastRespawnTime = 0;
+    private long lastBlockBreakTime = 0;
+    private long lastSoundPlayTime = 0; // Prevents repeated sound spam 
+    private BlockPos lastPosition = null; // For stuck detection
+    private int stuckCounter = 0;
+    private long targetResetTime = 0;
+    private long lastDistanceCheckTime = 0; // Prevents frequent distance checks
+    private Player primaryTarget = null; // The player that is being followed
+    private int distractionCounter = 0;
+    private BlockPos lastRecordedPosition = null;
+    private int stuckTicks = 0;
+    private boolean lastReportedStuck = false;
+
+    /**
+     * Constructor for the StalkerEntity.
+     *
+     * @param type The entity type.
+     * @param world The world.
+     */
+    public StalkerEntity(EntityType<? extends PathfinderMob> type, Level world) {
+        super(type, world);
+        this.setPersistenceRequired(); // Prevent despawning
+    }
+
+    /**
+     * Returns if the entity is invincible.
+     *
+     * @return The entity's invincibility status.
+     */
+    public boolean isInvincible() {
+        return ModConfig.IS_INVINCIBLE.get();
+    }
+
+    /**
+     * Creates and returns the attribute supplier for the entity.
+     *
+     * @return The attribute supplier builder.
+     */
+    public static AttributeSupplier.Builder createAttributes() {
+        return Mob.createMobAttributes()
+                .add(Attributes.MAX_HEALTH, ModConfig.isLoaded() ? ModConfig.STALKER_HEALTH.get() : 500.0) // Default 500.0, Range: 50.0 - 1000.0
+                .add(Attributes.MOVEMENT_SPEED, ModConfig.isLoaded() ? ModConfig.STALKER_SPEED.get() : 0.35) // Default 0.1, Range: 0.1 - 0.6
+                .add(Attributes.ATTACK_DAMAGE, ModConfig.isLoaded() ? ModConfig.STALKER_DAMAGE.get() : 15.0) // Default 15.0, Range 1.0 - 25
+                .add(Attributes.KNOCKBACK_RESISTANCE, 0.6) // Range 0.0 - 1.0
+                .add(Attributes.ATTACK_KNOCKBACK, 2.5) // Range 0.0 - 5.0
+                .add(Attributes.ATTACK_SPEED, 1.2) // Range 0.5 - 4.0
+                .add(Attributes.FOLLOW_RANGE, 100.0); // Range 16 - 100
+    }
+
+    /**
+     * Registers the goals for the entity.
+     */    
+    protected void registerGoals() {
+        // Primary focus: ALWAYS follow the target
+        this.goalSelector.addGoal(1, new StalkerFollowGoal(this)); 
+        
+        // Secondary focus: Deal with obstacles
+        this.goalSelector.addGoal(2, new StalkerBreakDoorGoal(this)); 
+        this.goalSelector.addGoal(3, new StalkerBreakGateGoal(this));
+        
+        // Opening doors is almost an afterthought - it will break through if that's faster
+        this.goalSelector.addGoal(4, new OpenDoorGoal(this));
+        this.goalSelector.addGoal(5, new StalkerOpenGateGoal(this));
+        
+        // Attack when in range - this happens automatically as it follows
+        this.goalSelector.addGoal(6, new MeleeAttackGoal(this, 1.0, true));
+        
+        // Basic survival is lowest priority - it's supernatural after all
+        this.goalSelector.addGoal(7, new FloatGoal(this));
+        
+        // Targeting remains focused entirely on the player
+        this.targetSelector.addGoal(PLAYER_FOCUS_PRIORITY, new NearestAttackableTargetGoal<>(this, Player.class, true));
+    
+        // Added a custom collision entity goal with lower priority
+        this.targetSelector.addGoal(COLLISION_ENTITY_PRIORITY, new NearestAttackableTargetGoal<>(this, LivingEntity.class, 10, true, false, 
+            (livingEntity) -> {
+                // Only target non-players that are in direct path to the player
+                return !(livingEntity instanceof Player) && 
+                       isEntityInPathToPlayer(livingEntity) && 
+                       this.distanceTo(livingEntity) < COLLISION_ATTACK_RADIUS;
+            }));
+    }
+    
+    /**
+     * Determines if an entity is in the direct path to the player.
+     * @param entity The entity to check
+     * @return True if the entity is in the path to the player
+     */
+    private boolean isEntityInPathToPlayer(LivingEntity entity) {
+        if (primaryTarget == null) return false;
+        
+        // Get vector from stalker to player
+        Vec3 stalkerToPlayer = new Vec3(
+            primaryTarget.getX() - this.getX(),
+            primaryTarget.getY() - this.getY(),
+            primaryTarget.getZ() - this.getZ()
+        );
+        
+        // Get vector from stalker to entity
+        Vec3 stalkerToEntity = new Vec3(
+            entity.getX() - this.getX(),
+            entity.getY() - this.getY(),
+            entity.getZ() - this.getZ()
+        );
+        
+        // Normalize vectors
+        Vec3 stalkerToPlayerNormalized = stalkerToPlayer.normalize();
+        Vec3 stalkerToEntityNormalized = stalkerToEntity.normalize();
+        
+        // Calculate dot product to determine angle
+        double dotProduct = stalkerToPlayerNormalized.x * stalkerToEntityNormalized.x +
+                           stalkerToPlayerNormalized.y * stalkerToEntityNormalized.y +
+                           stalkerToPlayerNormalized.z * stalkerToEntityNormalized.z;
+        
+        // Entity is in path if dot product is high (angle is small) and distance is small
+        return dotProduct > 0.7 && this.distanceTo(entity) < 5.0;
+    }    
+
+    /**
+     * aiStep method with respawn logic and cooldowns, called once per tick.
+     */
+    @Override
+    public void aiStep() {
+        super.aiStep();
+
+        // Only run this on the server side during the first 20 ticks or so.
+        if (!this.level.isClientSide) {
+            if (this.tickCount < 20) {
+                removeDuplicateEntities();
+            }
+        }
+
+        long worldTime = this.level.getGameTime();
+        
+        // Update the primary target (player) more frequently
+        if (primaryTarget == null || !primaryTarget.isAlive() || worldTime % 40 == 0) {
+            updatePrimaryTarget();
+            // Immediately set as target to maintain focus
+            if (primaryTarget != null) {
+                this.setTarget(primaryTarget);
+            }
+        }
+        
+        // Check if we're stuck with cooldown (once per 3 seconds)
+        if (worldTime % 60 == 0) {
+            boolean currentlyStuck = isStuck();
+            
+            // If we've been stuck for several checks, trigger respawn
+            if (currentlyStuck) {
+                stuckCounter++;
+                if (stuckCounter >= 3 && worldTime - lastRespawnTime >= 100) { // 5 seconds between respawn attempts
+                    // ItFollowsMod.LOGGER.info("[Stalker] Stuck for too long, respawning");
+                    this.respawnNearby();
+                    lastRespawnTime = worldTime;
+                    stuckCounter = 0;
+                }
+            } else {
+                stuckCounter = 0;
+            }
+        }
+        
+        // Day cycle respawn (every 20 minutes) - in other words, if I'm not stuck, respawn every 20 minutes.
+        if (worldTime - lastRespawnTime >= 24000) {
+            // ItFollowsMod.LOGGER.info("[Stalker] Day cycle respawn triggered");
+            this.respawnNearby();
+            lastRespawnTime = worldTime;
+        }
+
+        this.breakBlocksInPath();
+        this.wakeSleepingPlayers();
+        if (ModConfig.ENABLE_PROXIMITY_SOUNDS.get()) this.playSound();
+        this.checkPlayerDistanceAndRespawn();
+        
+        // Attack entities in the path to player without changing primary target
+        this.attackEntitiesInPath();
+        
+        // Always ensure player is the primary target unless temporarily distracted
+        if (this.getTarget() != primaryTarget && primaryTarget != null && primaryTarget.isAlive()) {
+            // Check if we should return to targeting the player
+            if (worldTime % 20 == 0 || this.distanceTo(primaryTarget) < 5.0) {
+                this.setTarget(primaryTarget);
+            }
+        }
+    }
+
+    /**
+     * New method to attack entities in the path without changing target
+     */
+    private void attackEntitiesInPath() {
+        if (primaryTarget == null) return;
+        
+        // Find entities in a narrow cone in front of the stalker toward the player
+        List<LivingEntity> entitiesInPath = this.level.getEntitiesOfClass(
+            LivingEntity.class,
+            this.getBoundingBox().inflate(COLLISION_ATTACK_RADIUS, COLLISION_ATTACK_RADIUS, COLLISION_ATTACK_RADIUS),
+            entity -> entity != this && 
+                     entity != primaryTarget && 
+                     entity.isAlive() && 
+                     isEntityInPathToPlayer(entity)
+        );
+        
+        // Attack the closest entity in path without changing primary target
+        if (!entitiesInPath.isEmpty()) {
+            LivingEntity closest = null;
+            double closestDist = Double.MAX_VALUE;
+            
+            for (LivingEntity entity : entitiesInPath) {
+                double dist = this.distanceToSqr(entity);
+                if (dist < closestDist) {
+                    closest = entity;
+                    closestDist = dist;
+                }
+            }
+            
+            if (closest != null && this.distanceTo(closest) < COLLISION_ATTACK_RADIUS) {
+                // Attack without changing target
+                this.doHurtTarget(closest);
+                
+                // Very briefly change target but quickly return to player
+                if (random.nextInt(5) == 0) { // Only 20% chance to temporarily switch targets
+                    // LivingEntity previousTarget = this.getTarget();
+                    this.setTarget(closest);
+                    // Reset back to previous target soon
+                    this.targetResetTime = this.level.getGameTime() + 20; // Reset after 1 second
+                }
+            }
+        }
+    }    
+
+    /**
+     * Update the primary target (always a player)
+     */
+    private void updatePrimaryTarget() {
+        Player nearest = this.level.getNearestPlayer(this, 256.0);
+        if (nearest != null) {
+            primaryTarget = nearest;
+        }
+    }
+
+    /**
+     * Prevents the entity from despawning when far away.
+     * 
+     * @param distance The distance from the player.
+     * @return True if the entity should despawn, false otherwise. Hint: Always return false.
+     */
+    @Override
+    public boolean removeWhenFarAway(double distance) {
+        return false; // Prevent despawning when far away
+    }
+
+    /**
+     * Handles damage taken by the entity.
+     *
+     * @param source The source of the damage.
+     * @param amount The amount of damage.
+     * @return True if the entity was hurt, false otherwise.
+     */
+    @Override
+    public boolean hurt(DamageSource source, float amount) {
+        // If the entity is invincible, play sound but don't apply damage
+        if (this.isInvincible()) {
+            
+            // Play sound regardless of damage source
+            if (ModConfig.ENABLE_HURT_SOUND.get()) {
+                this.level.playSound(null, this.getX(), this.getY(), this.getZ(),
+                ModSounds.VIOLINS.get(),
+                this.getSoundSource(), // Entity sound source
+                1.0F,  // Volume
+                1.0F); // Pitch
+            }
+            // Handle targeting logic even if invincible
+            if (source.getEntity() instanceof LivingEntity && !(source.getEntity() instanceof Player)) {
+                this.setTarget((LivingEntity)source.getEntity());
+                this.targetResetTime = this.level.getGameTime() + 20; // Reset after 1 second
+            }
+            
+            // Return false to prevent damage
+            return false;
+        }
+        
+        // If not invincible, process damage normally
+        boolean hurt = super.hurt(source, amount);
+        
+        if (hurt) {
+            // Play sound
+            if (ModConfig.ENABLE_HURT_SOUND.get()) {
+                this.level.playSound(null, this.getX(), this.getY(), this.getZ(),
+                ModSounds.VIOLINS.get(),
+                this.getSoundSource(),
+                1.0F,
+                1.0F);
+            }
+            
+            // Handle targeting logic
+            if (source.getEntity() instanceof LivingEntity && !(source.getEntity() instanceof Player)) {
+                this.setTarget((LivingEntity)source.getEntity());
+                this.targetResetTime = this.level.getGameTime() + 20;
+            }
+        }
+        
+        return hurt;
+    }
+
+    /**
+     * Do nothing, as the entity should not die.
+     *
+     * @param cause The cause of death.
+     */
+    @Override
+    public void die(DamageSource cause) {
+        // If invincible, do nothing
+        if (this.isInvincible()) {
+            return;
+        }
+        // Otherwise, call the parent method
+        super.die(cause);
+    }
+
+    /**
+     * Remove the entity's health bar
+     */
+    @Override
+    public boolean isInvulnerableTo(DamageSource source) {
+        // Return true if the entity is invincible
+        return this.isInvincible();
+    }
+
+
+    /**
+     * StalkerFollowGoal: Follows the nearest player while attacking anything in its path.
+     */
+    private class StalkerFollowGoal extends Goal {
+        private final StalkerEntity stalker;
+        private int pathRecalculationDelay = 0;
+
+        public StalkerFollowGoal(StalkerEntity stalker) {
+            this.stalker = stalker;
+            this.setFlags(EnumSet.of(Goal.Flag.MOVE, Goal.Flag.LOOK));
+        }
+
+        @Override
+        public boolean canUse() {
+            return primaryTarget != null && primaryTarget.isAlive();
+        }
+
+        @Override
+        public void start() {
+            // Set the primary target (player)
+            stalker.setTarget(primaryTarget);
+            pathRecalculationDelay = 0;
+        }
+
+        @Override
+        public void tick() {
+            if (primaryTarget == null || !primaryTarget.isAlive()) return;
+            
+            // Focus on player by looking at them
+            stalker.getLookControl().setLookAt(primaryTarget, 30.0F, 30.0F);
+            
+            // If we're targeting something other than the player, track distraction time
+            if (stalker.getTarget() != null && stalker.getTarget() != primaryTarget) {
+                distractionCounter++;
+                
+                // Return to targeting player after MAX_DISTRACTION_TIME or if player is close
+                if (distractionCounter >= MAX_DISTRACTION_TIME || 
+                    stalker.distanceTo(primaryTarget) < 5.0) {
+                    stalker.setTarget(primaryTarget);
+                    distractionCounter = 0;
+                }
+            } else {
+                distractionCounter = 0;
+            }
+            
+            // Recalculate path to player more frequently to improve navigation
+            if (--pathRecalculationDelay <= 0) {
+                pathRecalculationDelay = 10; // Recalculate every half second
+                stalker.getNavigation().moveTo(primaryTarget, stalker.getAttributeValue(Attributes.MOVEMENT_SPEED));
+            }
+            
+            // Attack if close to player
+            if (stalker.distanceTo(primaryTarget) <= 2.0) {
+                stalker.doHurtTarget(primaryTarget);
+            }
+        }
+    }
+
+    // Irrelevant code removed...
+    
+    /**
+     * Handles the entity's attack on a target, whether it's the player, or another entity.
+     *
+     * @param target The target entity.
+     * @return True if the attack was successful, false otherwise.
+     */
+    @Override
+    public boolean doHurtTarget(Entity target) {
+        if (target instanceof LivingEntity) {
+            float damage = (float) this.getAttributeValue(Attributes.ATTACK_DAMAGE);
+            boolean success = target.hurt(DamageSource.mobAttack(this), damage);
+            if (success) {
+                // Play attack sound
+                if (ModConfig.ENABLE_ATTACK_SOUND.get()) {
+                    this.level.playSound(null, this.getX(), this.getY(), this.getZ(), 
+                    ModSounds.ELECTRIC_ROAR.get(), 
+                    this.getSoundSource(), // Entity sound source
+                    0.7F,  // Volume 
+                    1.0F); // Pitch
+                }
+                // If it's not the primary target, only briefly target it
+                if (target != primaryTarget && target instanceof LivingEntity) {
+                    this.targetResetTime = this.level.getGameTime() + 20; // Reset after 1 second
+                }
+            }
+            
+            return success;
+        }
+        return super.doHurtTarget(target);
+    }
+
+    // Irrelevant code removed...
+
+}
