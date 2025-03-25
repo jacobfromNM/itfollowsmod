@@ -5,6 +5,10 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.config.ModConfig.Type;
 import net.minecraftforge.fml.ModLoadingContext;
 
+/** 
+ * ModConfig class for the It Follows Mod. This class is used to define the configuration options for the mod.
+ * The configuration options are stored in a ForgeConfigSpec object, which is then registered with the mod.
+ */
 @Mod.EventBusSubscriber(modid = ItFollowsMod.MOD_ID)
 public class ModConfig {
     private static final ForgeConfigSpec.Builder COMMON_BUILDER = new ForgeConfigSpec.Builder();
@@ -94,6 +98,9 @@ public class ModConfig {
         COMMON_CONFIG = COMMON_BUILDER.build();
     }
     
+   /**
+    * Registers the configuration options with the mod.
+    */
     public static void register() {
         ModLoadingContext.get().registerConfig(Type.COMMON, COMMON_CONFIG);
         ItFollowsMod.LOGGER.info("Registered It Follows Mod configuration");

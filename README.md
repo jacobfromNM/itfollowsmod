@@ -25,7 +25,7 @@ This mod is designed for horror enthusiasts seeking to introduce a sense of unen
 
 ## Installation
 
-1. **Backup Your World:**
+1. **Backup Your World**
 2. **Install Forge:** Download and install the [Forge Mod Loader](https://files.minecraftforge.net/).
 3. **Download the Mod:** Obtain the latest version of the It Follows mod from the [CurseForge page](https://www.curseforge.com/minecraft/mc-mods/it-follows-inspired-by-the-film-it-follows).
 4. **Add to Mods Folder:** Place the downloaded `.jar` file into your Minecraft `mods` directory.
@@ -33,7 +33,7 @@ This mod is designed for horror enthusiasts seeking to introduce a sense of unen
 
 ## Compatibility
 
-- **Minecraft Versions:** Code here is for 1.19.2, but the mod is compatible with both 1.19.2 and 1.20.1 
+- **Minecraft Versions:** Code here is for 1.19.2, but the mod is compatible with both 1.19.2 and 1.20.1.
 - **Mod Loader:** Forge
 
 ## Known Issues
