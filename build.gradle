@@ -5,7 +5,7 @@ plugins {
     id 'net.minecraftforge.gradle' version '[6.0,6.2)'
 }
 
-version = '1.2.1'
+version = '1.2.2'
 group = mod_group_id
 
 base {
@@ -16,7 +16,7 @@ jar {
     manifest {
         attributes(
             'Specification-Title': 'It Follows Mod',
-            'Specification-Version': '1.2.1',
+            'Specification-Version': '1.2.2',
             'Implementation-Title': 'It Follows Mod',
             'Implementation-Version': version,
             'Implementation-Vendor': 'Desert Creature Games'
