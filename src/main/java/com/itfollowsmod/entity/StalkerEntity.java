@@ -250,6 +250,29 @@ public class StalkerEntity extends PathfinderMob {
     }
 
     /**
+     * Check if the entity is in water/lave and adjust the speed accordingly (move faster)
+     * 
+     * @param travelVector The travel vector.
+     */
+    @Override
+    public void travel(Vec3 travelVector) {
+        boolean inLiquid = this.isInWater() || this.isInLava();
+        double baseSpeed = ModConfig.STALKER_MOVEMENT_SPEED.get();
+        double liquidSpeedBoost = baseSpeed * 2.0; // 100% faster in liquid
+
+        if (inLiquid) {
+            // Boost speed if in water/lava
+            this.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(liquidSpeedBoost);
+        } else {
+            // Reset to normal if not in liquid
+            this.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(baseSpeed);
+        }
+
+        super.travel(travelVector); // Call base class logic
+    }
+
+
+    /**
      * Method to attack entities in the path without changing target
      */
     private void attackEntitiesInPath() {
