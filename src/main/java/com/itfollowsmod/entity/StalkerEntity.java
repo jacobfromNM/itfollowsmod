@@ -250,7 +250,7 @@ public class StalkerEntity extends PathfinderMob {
     }
 
     /**
-     * Check if the entity is in water/lave and adjust the speed accordingly (move faster)
+     * Check if the entity is in water/lava and adjust the speed accordingly (move faster)
      * 
      * @param travelVector The travel vector.
      */

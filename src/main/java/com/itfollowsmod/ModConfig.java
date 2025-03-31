@@ -61,7 +61,7 @@ public class ModConfig {
 
         BREAKABLE_BLOCK_HARDNESS = COMMON_BUILDER
                 .comment("Softness threshold for blocks the entity can break (default: 1.0)")
-                .defineInRange("breakableBlockHardness", 1.0D, 0.0D, 100.0D);
+                .defineInRange("breakableBlockHardness", 1.0D, 0.0D, 1315.0D);
 
         STALKER_PREVENT_SLEEP = COMMON_BUILDER
                 .comment("Prevent the player from sleeping while the entity is nearby (default: true)")
