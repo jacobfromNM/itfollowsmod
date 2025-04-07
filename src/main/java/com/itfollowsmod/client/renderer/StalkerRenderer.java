@@ -17,15 +17,20 @@ import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.level.LightLayer;
 
 /**
- * Renderer for the Stalker entity. Adjusts visibility based on light levels and rotates between different skins.
+ * Renderer for the Stalker entity. Adjusts visibility based on light levels and
+ * rotates between different skins.
  * 
  * @see HumanoidMobRenderer
  */
 public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, HumanoidModel<StalkerEntity>> {
-    private static final ResourceLocation STEVE_TEXTURE = new ResourceLocation("itfollowsmod", "textures/entity/steve.png");
-    private static final ResourceLocation ALEX_TEXTURE = new ResourceLocation("itfollowsmod", "textures/entity/alex.png");
-    private static final ResourceLocation VILLAGER_TEXTURE = new ResourceLocation("itfollowsmod", "textures/entity/villager.png");
-    // private static final ResourceLocation INVISIBLE_TEXTURE = new ResourceLocation("itfollowsmod", "textures/entity/invisible.png");
+    private static final ResourceLocation STEVE_TEXTURE = new ResourceLocation("itfollowsmod",
+            "textures/entity/steve.png");
+    private static final ResourceLocation ALEX_TEXTURE = new ResourceLocation("itfollowsmod",
+            "textures/entity/alex.png");
+    private static final ResourceLocation VILLAGER_TEXTURE = new ResourceLocation("itfollowsmod",
+            "textures/entity/villager.png");
+    // private static final ResourceLocation INVISIBLE_TEXTURE = new
+    // ResourceLocation("itfollowsmod", "textures/entity/invisible.png");
 
     public StalkerRenderer(EntityRendererProvider.Context context) {
         super(context, new HumanoidModel<>(context.bakeLayer(ModelLayers.PLAYER)), 0.5F);
@@ -34,13 +39,13 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
     /**
      * Renders the Stalker entity based on the current light levels
      * 
-     * @param entity The Stalker entity
-     * @param entityYaw The entity's yaw rotation
+     * @param entity       The Stalker entity
+     * @param entityYaw    The entity's yaw rotation
      * @param partialTicks The partial tick time
      */
     @Override
-    public void render(StalkerEntity entity, float entityYaw, float partialTicks, PoseStack matrixStack, 
-                     MultiBufferSource buffer, int packedLight) {
+    public void render(StalkerEntity entity, float entityYaw, float partialTicks, PoseStack matrixStack,
+            MultiBufferSource buffer, int packedLight) {
         // Check if we should render the entity at all
         if (shouldRenderEntity(entity)) {
             super.render(entity, entityYaw, partialTicks, matrixStack, buffer, packedLight);
@@ -49,7 +54,8 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
     }
 
     /**
-     * Gets the texture location for the Stalker entity based on the current skin index
+     * Gets the texture location for the Stalker entity based on the current skin
+     * index
      * 
      * @param entity The Stalker entity
      * @return The texture location for the entity
@@ -58,7 +64,7 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
     public ResourceLocation getTextureLocation(StalkerEntity entity) {
         // Get the current skin index (0-3) from the entity
         int skinIndex = getSkinIndex(entity);
-        
+
         // Return the appropriate texture based on the skin index
         switch (skinIndex) {
             case 0:
@@ -74,7 +80,7 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
                 return STEVE_TEXTURE;
         }
     }
-    
+
     /**
      *
      * @param entity The Stalker entity
@@ -83,9 +89,9 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
     private int getSkinIndex(StalkerEntity entity) {
         // Time-based rotation (changes every few seconds)
         long worldTime = entity.level.getGameTime();
-        return (int)(worldTime / 3600) % 4; // Changes every 3600 ticks (3 minutes)
+        return (int) (worldTime / 3600) % 4; // Changes every 3600 ticks (3 minutes)
     }
-    
+
     /**
      * Gets the skin of the nearest player, or defaults to Steve if none found
      * 
@@ -95,7 +101,7 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
     private ResourceLocation getNearestPlayerSkin(StalkerEntity entity) {
         // Find the nearest player
         Player nearestPlayer = entity.level.getNearestPlayer(entity, 64.0); // 64 block radius
-        
+
         if (nearestPlayer != null && nearestPlayer instanceof AbstractClientPlayer) {
             // Return the player's skin
             return ((AbstractClientPlayer) nearestPlayer).getSkinTextureLocation();
@@ -106,11 +112,11 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
                 return ((AbstractClientPlayer) clientPlayer).getSkinTextureLocation();
             }
         }
-        
+
         // Default to Steve if no player is found
         return STEVE_TEXTURE;
     }
-    
+
     /**
      * Determines if the entity should be rendered based on light conditions
      * 
@@ -118,23 +124,24 @@ public class StalkerRenderer extends HumanoidMobRenderer<StalkerEntity, Humanoid
      * @return True if the entity should be rendered, false otherwise
      */
     private boolean shouldRenderEntity(StalkerEntity entity) {
-        if (entity == null || entity.level == null) return false;
-        
+        if (entity == null || entity.level == null)
+            return false;
+
         // Get block light (artificial light sources)
         int blockLight = entity.level.getBrightness(LightLayer.BLOCK, entity.blockPosition());
-        
+
         // Check if it's day or night
         long dayTime = entity.level.getDayTime() % 24000;
         boolean isNightTime = dayTime > 13000 && dayTime < 23000;
-        
+
         // Get sky light (affected by time of day and blocks above)
         int skyLight = entity.level.getBrightness(LightLayer.SKY, entity.blockPosition());
-        
+
         // Calculate effective light level
         // Block light is effective regardless of time of day
         // Sky light is only effective during day time
         int effectiveLight = blockLight;
-        
+
         // Only count sky light if it's daytime
         if (!isNightTime) {
             effectiveLight = Math.max(blockLight, skyLight);
