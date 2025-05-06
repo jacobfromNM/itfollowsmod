@@ -33,7 +33,7 @@ public class ItFollowsMod {
         ModConfig.register();
 
         INSTANCE = this; // Store instance reference
-        LOGGER.info("Initializing the It Follows mod");
+        LOGGER.info("[It Follows] Initializing the It Follows mod...");
         
         IEventBus modEventBus = FMLJavaModLoadingContext.get().getModEventBus();
         
@@ -56,7 +56,7 @@ public class ItFollowsMod {
      * @param event
      */
     private void setup(final FMLCommonSetupEvent event) {
-        LOGGER.info("It Follows Mod initialization");
+        LOGGER.info("[It Follows] It Follows Mod initialization");
     }
 
     /**

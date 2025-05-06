@@ -24,6 +24,15 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.levelgen.Heightmap;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.tags.BlockTags;
+import net.minecraft.world.entity.ai.navigation.WallClimberNavigation;
+import net.minecraft.world.entity.ai.navigation.PathNavigation;
+import net.minecraft.world.level.Level;
+
+// Forge Imports...
+import net.minecraftforge.registries.ForgeRegistries;
+import net.minecraft.resources.ResourceLocation;
 
 // Java imports
 import java.util.ArrayList;
@@ -69,6 +78,7 @@ public class StalkerEntity extends PathfinderMob {
     public StalkerEntity(EntityType<? extends PathfinderMob> type, Level world) {
         super(type, world);
         this.setPersistenceRequired(); // Prevent despawning
+        this.maxUpStep = 1.0F; // Can step up full blocks like a player
     }
 
     /**
@@ -77,8 +87,8 @@ public class StalkerEntity extends PathfinderMob {
      * @return The attribute supplier builder.
      */
     public static AttributeSupplier.Builder createAttributes() {
-        // ItFollowsMod.LOGGER.info("[Stalker] Setting Mob attributes...");
-        // ItFollowsMod.LOGGER.info("[Stalker] Loading attributes from ModConfig...");
+        // ItFollowsMod.LOGGER.info("[It Follows] Setting Mob attributes...");
+        // ItFollowsMod.LOGGER.info("[It Follows] Loading attributes from ModConfig...");
         // ItFollowsMod.LOGGER.info("MAX_HEALTH: {}",
         // ModConfig.STALKER_MAX_HEALTH.get());
         // ItFollowsMod.LOGGER.info("MOVEMENT_SPEED: {}",
@@ -102,6 +112,9 @@ public class StalkerEntity extends PathfinderMob {
     @Override
     public void onAddedToWorld() {
         if (!this.level.isClientSide) {
+            // Remove DuplicateEntities:
+            removeDuplicateEntities();
+
             // Apply config values to attributes
             this.getAttribute(Attributes.MAX_HEALTH).setBaseValue(ModConfig.STALKER_MAX_HEALTH.get());
             this.getAttribute(Attributes.ATTACK_DAMAGE).setBaseValue(ModConfig.STALKER_ATTACK_DAMAGE.get());
@@ -197,13 +210,6 @@ public class StalkerEntity extends PathfinderMob {
     public void aiStep() {
         super.aiStep();
 
-        // Only run this on the server side during the first 20 ticks or so.
-        if (!this.level.isClientSide) {
-            if (this.tickCount < 20) {
-                removeDuplicateEntities();
-            }
-        }
-
         long worldTime = this.level.getGameTime();
 
         // Update the primary target (player) more frequently
@@ -219,11 +225,11 @@ public class StalkerEntity extends PathfinderMob {
         if (worldTime % 60 == 0) {
             boolean currentlyStuck = isStuck();
 
-            // If we've been stuck for several checks, trigger respawn
+            // If we've been stuck for several checks, trigger respawn  
             if (currentlyStuck) {
                 stuckCounter++;
                 if (stuckCounter >= 3 && worldTime - lastRespawnTime >= 100) { // 5 seconds between respawn attempts
-                    // ItFollowsMod.LOGGER.info("[Stalker] Stuck for too long, respawning");
+                    if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Stuck for too long, respawning");
                     this.respawnNearby();
                     lastRespawnTime = worldTime;
                     stuckCounter = 0;
@@ -236,7 +242,7 @@ public class StalkerEntity extends PathfinderMob {
         // Day cycle respawn (every 20 minutes) - in other words, if I'm not stuck,
         // respawn every 20 minutes.
         if (worldTime - lastRespawnTime >= 24000) {
-            // ItFollowsMod.LOGGER.info("[Stalker] Day cycle respawn triggered");
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Day cycle respawn triggered");
             this.respawnNearby();
             lastRespawnTime = worldTime;
         }
@@ -262,7 +268,7 @@ public class StalkerEntity extends PathfinderMob {
 
     /**
      * Check if the entity is in water/lava and adjust the speed accordingly (move
-     * faster)
+     * faster). Also adds a minor speed booost if the player is close.
      * 
      * @param travelVector The travel vector.
      */
@@ -270,17 +276,31 @@ public class StalkerEntity extends PathfinderMob {
     public void travel(Vec3 travelVector) {
         boolean inLiquid = this.isInWater() || this.isInLava();
         double baseSpeed = ModConfig.STALKER_MOVEMENT_SPEED.get();
-        double liquidSpeedBoost = baseSpeed * 2.0; // 100% faster in liquid
+        double adjustedSpeed = baseSpeed;
 
         if (inLiquid) {
-            // Boost speed if in water/lava
-            this.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(liquidSpeedBoost);
+            // Double speed when stalking through water or lava—because nothing is more
+            // terrifying than a wet Stalker
+            adjustedSpeed = baseSpeed * 2.0;
         } else {
-            // Reset to normal if not in liquid
-            this.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(baseSpeed);
+            // Adjust speed based on proximity to the player
+            if (primaryTarget != null && primaryTarget.isAlive()) {
+                double distance = this.distanceTo(primaryTarget);
+
+                if (distance <= 15.0) {
+                    adjustedSpeed = baseSpeed * 1.3; // 30% faster when right behind you—boo!
+                } else if (distance <= 30.0) {
+                    adjustedSpeed = baseSpeed * 1.2; // 20% faster when getting closer
+                }
+                // Else, keep base speed—no rush, it has eternity
+            }
         }
 
-        super.travel(travelVector); // Call base class logic
+        // Apply the speed value to the entity
+        this.getAttribute(Attributes.MOVEMENT_SPEED).setBaseValue(adjustedSpeed);
+
+        // Proceed with normal travel logic
+        super.travel(travelVector);
     }
 
     /**
@@ -332,7 +352,7 @@ public class StalkerEntity extends PathfinderMob {
      * Update the primary target (always a player)
      */
     private void updatePrimaryTarget() {
-        Player nearest = this.level.getNearestPlayer(this, 256.0);
+        Player nearest = this.level.getNearestPlayer(this, 512.0); // Get the nearest player within 512 blocks
         if (nearest != null) {
             primaryTarget = nearest;
         }
@@ -342,53 +362,33 @@ public class StalkerEntity extends PathfinderMob {
      * Remove duplicate entities from the world.
      */
     private void removeDuplicateEntities() {
-        Level world = this.level;
-
-        // Log current entity ID for debugging
-        // ItFollowsMod.LOGGER.info("[Stalker] Current entity ID: {}", this.getId());
-
-        // Get stalker entities in the entire world
-        List<StalkerEntity> stalkers = world.getEntitiesOfClass(
-                StalkerEntity.class,
-                new AABB(
-                        -30000000, 0, -30000000,
-                        30000000, 256, 30000000));
-
-        // For logging purposes...
-        // for (StalkerEntity stalker : stalkers) {
-        // ItFollowsMod.LOGGER.info("[Stalker] Found stalker with ID: {}",
-        // stalker.getId());
-        // }
-
-        // ItFollowsMod.LOGGER.info("[Stalker] Found {} stalkers in the world",
-        // stalkers.size());
-
-        // Only proceed if we found multiple stalkers
-        if (stalkers.size() > 1) {
-            // Sort by entity ID (lower ID is older in most cases)
-            stalkers.sort(Comparator.comparingInt(Entity::getId));
-
-            // Keep the entity with the lowest ID
-            StalkerEntity oldest = stalkers.get(0);
-            // ItFollowsMod.LOGGER.info("[Stalker] Oldest stalker has ID: {}",
-            // oldest.getId());
-
-            // If this isn't the oldest entity, remove it
-            if (this.getId() != oldest.getId()) {
-                // ItFollowsMod.LOGGER.info("[Stalker] Removing duplicate entity with ID: {}",
-                // this.getId());
-                this.discard();
-            } else {
-                // If we're the oldest, remove all others
-                for (int i = 1; i < stalkers.size(); i++) {
-                    StalkerEntity duplicate = stalkers.get(i);
-                    // ItFollowsMod.LOGGER.info("[Stalker] Removing duplicate entity with ID: {}",
-                    // duplicate.getId());
-                    duplicate.discard();
-                }
-            }
+        if (this.level.isClientSide) return; // Only run on server side
+    
+        ServerLevel serverLevel = (ServerLevel) this.level;
+    
+        List<StalkerEntity> allStalkers = serverLevel.getEntitiesOfClass(
+            StalkerEntity.class,
+            new AABB(
+                serverLevel.getMinBuildHeight(), 0, serverLevel.getMinBuildHeight(),
+                serverLevel.getMaxBuildHeight(), 256, serverLevel.getMaxBuildHeight())
+        );
+    
+        if (allStalkers.size() <= 1) return;
+    
+        allStalkers.sort(Comparator.comparingInt(Entity::getId));
+        StalkerEntity oldest = allStalkers.get(0);
+    
+        for (int i = 1; i < allStalkers.size(); i++) {
+            StalkerEntity duplicate = allStalkers.get(i);
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It FOllows] Removing duplicate Stalker with ID: {}", duplicate.getId());
+            duplicate.discard();
+        }
+    
+        if (this != oldest) {
+            this.discard();
         }
     }
+    
 
     /**
      * Prevents the entity from despawning when far away.
@@ -499,7 +499,7 @@ public class StalkerEntity extends PathfinderMob {
                     this.targetResetTime = this.level.getGameTime() + 20; // Reset after 1 second
                 }
             }
-            ItFollowsMod.LOGGER.info("[Stalker] Attacked target for {} damage.", damage);
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Attacked target for {} damage.", damage);
             return success;
         }
         return super.doHurtTarget(target);
@@ -647,7 +647,7 @@ public class StalkerEntity extends PathfinderMob {
             if (state.getBlock() instanceof FenceGateBlock) {
                 stalker.level.destroyBlock(pos, true);
                 stalker.playSound(SoundEvents.WOOD_BREAK, 1.0F, 1.0F);
-                // ItFollowsMod.LOGGER.info("[Stalker] Broke a fence gate at {}", pos);
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Broke a fence gate at {}", pos);
             }
         }
     }
@@ -738,7 +738,7 @@ public class StalkerEntity extends PathfinderMob {
                         !state.getValue(net.minecraft.world.level.block.DoorBlock.OPEN)) {
                     stalker.level.destroyBlock(pos, true);
                     stalker.playSound(SoundEvents.WOOD_BREAK, 1.0F, 1.0F);
-                    // ItFollowsMod.LOGGER.info("[Stalker] Broke a door at {}", pos);
+                    if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Broke a door at {}", pos);
                     lastBreakAttempt = stalker.level.getGameTime();
                     break;
                 }
@@ -773,7 +773,7 @@ public class StalkerEntity extends PathfinderMob {
                         1.0F, // Volume
                         1.0F); // Pitch
 
-                // ItFollowsMod.LOGGER.info("[Stalker] Playing sound");
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Playing sound");
                 break; // Play sound for only one player at a time
             }
         }
@@ -793,7 +793,7 @@ public class StalkerEntity extends PathfinderMob {
 
         for (Player player : this.level.players()) {
             if (player.isSleeping() && this.distanceTo(player) < ModConfig.STALKER_WAKING_DISTANCE.get()) {
-                // ItFollowsMod.LOGGER.info("[Stalker] wakeSleepingPlayers: Waking player.");
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] wakeSleepingPlayers: Waking player.");
                 player.stopSleeping();
                 player.displayClientMessage(Component.literal("You can't sleep, something approaches..."), true);
                 attemptTeleportNearPlayer(serverWorld);
@@ -811,8 +811,7 @@ public class StalkerEntity extends PathfinderMob {
         Player nearestPlayer = serverWorld.getNearestPlayer(this, 512.0);
 
         if (nearestPlayer == null) {
-            // ItFollowsMod.LOGGER.info("[Stalker] No nearby player found for
-            // teleportation.");
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] No nearby player found for teleportation.");
             return;
         }
 
@@ -821,14 +820,12 @@ public class StalkerEntity extends PathfinderMob {
         // 20% chance
         boolean shouldTeleport = this.distanceToSqr(nearestPlayer) > ModConfig.MINIMUM_SPAWN_DISTANCE.get();
 
-        /*
-         * ItFollowsMod.LOGGER.
-         * info("[Stalker] Teleport check: Distance={}, MinDistance={}, ChanceRoll={}",
-         * this.distanceToSqr(nearestPlayer),
-         * ModConfig.MINIMUM_SPAWN_DISTANCE.get(),
-         * shouldTeleport
-         * );
-         */
+
+        if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Teleport check: Distance={}, MinDistance={}, ChanceRoll={}", 
+            this.distanceToSqr(nearestPlayer),
+            ModConfig.MINIMUM_SPAWN_DISTANCE.get(),
+            shouldTeleport);
+
 
         if (!shouldTeleport)
             return;
@@ -837,21 +834,9 @@ public class StalkerEntity extends PathfinderMob {
         BlockPos spawnPos = trySpawnAdjacentToPlayer(serverWorld, nearestPlayer);
 
         if (spawnPos != null) {
-            double oldX = this.getX();
-            double oldY = this.getY();
-            double oldZ = this.getZ();
-
             this.teleportTo(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-
-            /*
-             * ItFollowsMod.LOGGER.
-             * info("[Stalker] Teleported from ({}, {}, {}) to ({}, {}, {})",
-             * oldX, oldY, oldZ,
-             * spawnPos.getX(), spawnPos.getY(), spawnPos.getZ()
-             * );
-             */
         } else {
-            ItFollowsMod.LOGGER.info("[Stalker] No valid spawn positions found near player.");
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] No valid spawn positions found near player.");
         }
     }
 
@@ -879,8 +864,31 @@ public class StalkerEntity extends PathfinderMob {
      * @return True if the block is breakable, false otherwise.
      */
     private boolean isBreakable(BlockState state) {
+        Block block = state.getBlock();
         float hardness = state.getDestroySpeed(level, this.blockPosition());
-        return hardness > 0 && hardness < ModConfig.BREAKABLE_BLOCK_HARDNESS.get();
+
+        // First, check if the block is breakable by the entity based on the modconfig value.
+        if (hardness > 0 && hardness < ModConfig.BREAKABLE_BLOCK_HARDNESS.get()) return true;
+
+        // Allow specific block types (thematic breaking)
+        // Always break these thematic "barrier" types
+        if (block instanceof FenceGateBlock ||
+                block instanceof net.minecraft.world.level.block.DoorBlock ||
+                block instanceof net.minecraft.world.level.block.TrapDoorBlock ||
+                block instanceof net.minecraft.world.level.block.WallBlock) {
+            return true;
+        }
+
+        // Use ForgeRegistries to get the block's registry path
+        ResourceLocation id = ForgeRegistries.BLOCKS.getKey(block);
+        if (id != null) {
+            String path = id.getPath();
+            if (path.contains("barrier") || path.contains("torch") || path.contains("candle")) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -895,22 +903,20 @@ public class StalkerEntity extends PathfinderMob {
         Player nearestPlayer = serverWorld.getNearestPlayer(this, 512.0);
 
         if (nearestPlayer == null) {
-            // ItFollowsMod.LOGGER.warn("[Stalker] respawnNearby: No player found nearby.
-            // Leaving entity at current location.");
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.warn("[It Follows] respawnNearby: No player found nearby. Leaving entity at current location.");
             return;
         }
 
         // Check for the rare chance to spawn right next to player
         boolean spawnNearPlayer = (this.distanceToSqr(nearestPlayer) > ModConfig.MINIMUM_SPAWN_DISTANCE.get())
-                && (random.nextDouble() < 0.005);
+                && (random.nextDouble() < 0.05); // 5% chance to spawn directly next to the player.
         BlockPos spawnPos = null;
 
         if (spawnNearPlayer) {
             spawnPos = trySpawnAdjacentToPlayer(serverWorld, nearestPlayer);
             if (spawnPos != null) {
                 this.teleportTo(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-                // ItFollowsMod.LOGGER.info("[Stalker] Respawned directly beside player at {}",
-                // spawnPos);
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Respawned directly beside player at {}",spawnPos);
                 return;
             }
         }
@@ -920,7 +926,7 @@ public class StalkerEntity extends PathfinderMob {
 
         if (spawnPos != null) {
             this.teleportTo(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-            // ItFollowsMod.LOGGER.info("[Stalker] Respawned successfully at {}", spawnPos);
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Respawned successfully at {}", spawnPos);
 
             // Make sure the entity isn't stuck in blocks after teleporting
             if (this.level.getBlockState(this.blockPosition()).getMaterial().isSolid()) {
@@ -931,12 +937,11 @@ public class StalkerEntity extends PathfinderMob {
                     elevatedPos = elevatedPos.above();
                 }
                 this.teleportTo(elevatedPos.getX() + 0.5, elevatedPos.getY(), elevatedPos.getZ() + 0.5);
-                // ItFollowsMod.LOGGER.info("[Stalker] Adjusted position upward to {}",
-                // elevatedPos);
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Adjusted position upward to {}",elevatedPos);
             }
         } else {
-            // ItFollowsMod.LOGGER.warn("[Stalker] Failed to find spawn position - falling
-            // back to vanilla spawn placement");
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.warn("[It Follows] Failed to find spawn position - falling back to vanilla spawn placement");
+            
             // As a fallback, use vanilla mob spawn logic directly
             vanillaSpawnNearPlayer(serverWorld, nearestPlayer);
         }
@@ -971,14 +976,12 @@ public class StalkerEntity extends PathfinderMob {
 
             if (spawnPos != null) {
                 this.teleportTo(spawnPos.getX() + 0.5, spawnPos.getY(), spawnPos.getZ() + 0.5);
-                // ItFollowsMod.LOGGER.info("[Stalker] Vanilla spawn succeeded at {}",
-                // spawnPos);
+                if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Vanilla spawn succeeded at {}", spawnPos);
                 return;
             }
         }
 
-        // ItFollowsMod.LOGGER.error("[Stalker] All spawn attempts failed - entity will
-        // remain at current position");
+        if (ModConfig.ENABLE_LOGGING.get())  ItFollowsMod.LOGGER.error("[It Follows] All spawn attempts failed - entity willremain at current position");
     }
 
     /**
@@ -1179,8 +1182,7 @@ public class StalkerEntity extends PathfinderMob {
                 .nextInt(ModConfig.MAXIMUM_SPAWN_DISTANCE.get() - ModConfig.MINIMUM_SPAWN_DISTANCE.get() + 1);
 
         if (distanceSquared > respawnDistance * respawnDistance) {
-            // ItFollowsMod.LOGGER.info("[Stalker] Player is {} blocks away, respawning
-            // closer", Math.sqrt(distanceSquared));
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.info("[It Follows] Player is {} blocks away, respawning closer", Math.sqrt(distanceSquared));
             this.respawnNearby();
             lastRespawnTime = currentTime;
         }
@@ -1220,14 +1222,24 @@ public class StalkerEntity extends PathfinderMob {
         boolean stuck = inSolid || navigationStuck || samePosition;
 
         if (stuck && !lastReportedStuck) {
-            // ItFollowsMod.LOGGER.warn("[Stalker] isStuck: Stalker is stuck at {}",
-            // this.blockPosition());
+            if (ModConfig.ENABLE_LOGGING.get()) ItFollowsMod.LOGGER.warn("[It Follows] isStuck: Stalker is stuck at {}", this.blockPosition());
             lastReportedStuck = true;
         } else if (!stuck) {
             lastReportedStuck = false;
         }
 
         return stuck;
+    }
+
+    public boolean isClimbing() {
+        BlockPos pos = this.blockPosition();
+        BlockState state = this.level.getBlockState(pos);
+        return state.is(BlockTags.CLIMBABLE);
+    }
+
+    @Override
+    protected PathNavigation createNavigation(Level world) {
+        return new WallClimberNavigation(this, world);
     }
 
     /**
