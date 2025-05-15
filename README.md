@@ -1,4 +1,4 @@
-# It Follows Mod for Minecraft
+# It Follows Mod for Minecraft (1.19.2)
 
 *Inspired by the film ["It Follows"](https://en.wikipedia.org/wiki/It_Follows), this mod introduces a relentless entity that will haunt your Minecraft world.*
 
